@@ -647,22 +647,20 @@ function initR(){
   recognition.interimResults=true;
   recognition.continuous=false;
 
-  recognition.onstart=()=>{setState("listening")};
+  let lastResult=""; // この認識セッションの結果
+
+  recognition.onstart=()=>{lastResult="";input.value="";setState("listening")};
 
   recognition.onresult=(e)=>{
-    let final="",interim="";
-    for(let i=0;i<e.results.length;i++){
-      if(e.results[i].isFinal)final+=e.results[i][0].transcript;
-      else interim+=e.results[i][0].transcript;
-    }
-    input.value=final||interim;
+    // continuous:falseなのでresults[0]だけ見る
+    const r=e.results[0];
+    input.value=r[0].transcript;
+    if(r.isFinal)lastResult=r[0].transcript.trim();
   };
 
   recognition.onend=()=>{
-    // stateがlistening以外なら何もしない（abort等で止めた場合）
     if(state!=="listening"){return}
-    const txt=input.value.trim();
-    if(txt){sendText(txt)}
+    if(lastResult){sendText(lastResult);lastResult=""}
     else{setState("idle");maybeAutoListen()}
   };
 
