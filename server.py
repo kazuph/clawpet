@@ -549,7 +549,8 @@ function buildCtx(){
 
 async function sendText(t){
   if(!t||busy)return;
-  stopL(); // 聞き取り停止
+  busy=true; // 先にbusy設定してからstopL。onendが発火しても再開されない
+  stopL();
   addMsg(t,"user");input.value="";input.style.height="auto";
   setB(true);setS("かんがえちゅうきゅぴ...");
   try{
@@ -574,14 +575,16 @@ newBtn.onclick=()=>{if(busy)return;stopL();speechSynthesis.cancel();speaking=fal
 // ============================================
 let lastSpokenText="";
 function speak(t){
-  stopL(); // 必ず聞き取り停止
+  // 先にspeaking=trueにしてからstopL。onendが発火しても再開されない
+  speaking=true;
+  stopL();
   speechSynthesis.cancel();
   let c=t.replace(/```[\s\S]*?```/g,"コードブロック省略。").replace(/`[^`]+`/g,"").replace(/[#*_~>]/g,"").replace(/\n{2,}/g,"\n");
   if(c.length>1000)c=c.slice(0,1000)+"...以下省略";
   lastSpokenText=c;
   const u=new SpeechSynthesisUtterance(c);u.lang="ja-JP";u.rate=1.1;
   const v=speechSynthesis.getVoices(),ja=v.find(x=>x.lang.startsWith("ja"));if(ja)u.voice=ja;
-  speaking=true;setCS("speaking");stopBtn.classList.add("show");setS("おはなしちゅうきゅぴ...");
+  setCS("speaking");stopBtn.classList.add("show");setS("おはなしちゅうきゅぴ...");
   u.onend=()=>{speaking=false;stopBtn.classList.remove("show");goIdle()};
   u.onerror=u.onend;
   speechSynthesis.speak(u);
@@ -633,9 +636,10 @@ function initR(){
   };
 
   recognition.onerror=(e)=>{
-    if(e.error==="no-speech"||e.error==="aborted")return;
     listening=false;micBtn.classList.remove("listening");
-    setS("エラーきゅぴ: "+e.error);
+    if(e.error!=="no-speech"&&e.error!=="aborted"){
+      setS("エラーきゅぴ: "+e.error);
+    }
   };
 }
 
