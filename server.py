@@ -300,10 +300,10 @@ body{
 
 /* Typing indicator */
 #typing{
-  display:none;align-self:flex-start;
+  display:none;
   background:var(--bubble-ai);border:1px solid #d0d0a0;
   padding:8px 14px;border-radius:8px;border-bottom-left-radius:2px;
-  gap:5px;align-items:center;
+  gap:5px;align-items:center;margin:0 10px 4px;
 }
 #typing.show{display:flex}
 #typing .dot{
@@ -467,9 +467,8 @@ body{
 
     <!-- Chat -->
     <div id="chat-area">
-      <div id="chat">
-        <div id="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
-      </div>
+      <div id="chat"></div>
+      <div id="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
     </div>
   </div>
 
@@ -519,7 +518,11 @@ function loadH(){try{const d=JSON.parse(localStorage.getItem(SK));return Array.i
 function saveH(m){localStorage.setItem(SK,JSON.stringify(m))}
 let messages=loadH();
 
-function renderH(){chatEl.innerHTML="";messages.forEach(m=>appB(m.text,m.role));chatEl.scrollTop=chatEl.scrollHeight}
+function renderH(){
+  chatEl.innerHTML="";
+  messages.forEach(m=>appB(m.text,m.role));
+  chatEl.scrollTop=chatEl.scrollHeight;
+}
 function appB(t,r){const d=document.createElement("div");d.className="msg "+r;d.textContent=t;chatEl.appendChild(d);chatEl.scrollTop=chatEl.scrollHeight}
 function addMsg(t,r){messages.push({role:r,text:t});saveH(messages);appB(t,r)}
 
@@ -796,7 +799,7 @@ infoBtn.onclick=()=>infoOv.classList.add("show");
 infoClose.onclick=()=>infoOv.classList.remove("show");
 infoOv.onclick=(e)=>{if(e.target===infoOv)infoOv.classList.remove("show")};
 
-initR();renderH();setState("idle");
+try{initR()}catch(e){}renderH();setState("idle");
 // Auto-start listening on page load
 if(autoListenCb.checked)setTimeout(()=>startL(),1000);
 </script>
