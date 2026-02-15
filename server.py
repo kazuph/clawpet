@@ -496,7 +496,7 @@ autoListenCb=document.getElementById("auto-listen"),autoSpeakCb=document.getElem
 stopBtn=document.getElementById("stop-btn"),newBtn=document.getElementById("new-btn"),
 typingEl=document.getElementById("typing");
 
-let busy=false,recognition=null,listening=false,speaking=false;
+let recognition=null,speaking=false;
 const SK="claude-voice-chat";
 
 // --- Wake Lock (prevent browser/screen sleep) ---
@@ -525,11 +525,6 @@ function addMsg(t,r){messages.push({role:r,text:t});saveH(messages);appB(t,r)}
 
 function setCS(s){charEl.className=s}
 function setS(t){statusEl.textContent=t}
-function setB(b){
-  busy=b;sendBtn.disabled=b;
-  if(b){setCS("thinking");typingEl.classList.add("show");chatEl.scrollTop=chatEl.scrollHeight;input.placeholder="かんがえちゅうきゅぴ..."}
-  else{typingEl.classList.remove("show");if(!speaking&&!listening)setCS("");input.placeholder="はなしかけてきゅぴ..."}
-}
 
 function buildCtx(){
   const cx=messages.filter(m=>m.role==="user"||m.role==="ai").slice(-20);
@@ -543,59 +538,100 @@ function buildCtx(){
 }
 
 // ============================================
-// 状態マシン: idle → listening → thinking → speaking → idle
-// 同時に2つの状態にはならない。競合なし。
+// 状態: idle / listening / thinking / speaking
+// 排他的。同時に2つにはならない。
 // ============================================
+let state="idle"; // "idle"|"listening"|"thinking"|"speaking"
+
+function setState(s){
+  state=s;
+  // 状態に応じたUI更新
+  if(s==="idle"){
+    setCS("");setS("きいてるきゅぴ!");
+    micBtn.classList.remove("listening");
+    stopBtn.classList.remove("show");
+    typingEl.classList.remove("show");
+    input.placeholder="はなしかけてきゅぴ...";
+    sendBtn.disabled=false;
+  }else if(s==="listening"){
+    setCS("listening");setS("きいてるきゅぴ...");
+    micBtn.classList.add("listening");
+  }else if(s==="thinking"){
+    setCS("thinking");setS("かんがえちゅうきゅぴ...");
+    micBtn.classList.remove("listening");
+    typingEl.classList.add("show");
+    chatEl.scrollTop=chatEl.scrollHeight;
+    input.placeholder="かんがえちゅうきゅぴ...";
+    sendBtn.disabled=true;
+  }else if(s==="speaking"){
+    setCS("speaking");setS("おはなしちゅうきゅぴ...");
+    micBtn.classList.remove("listening");
+    stopBtn.classList.add("show");
+    typingEl.classList.remove("show");
+    input.placeholder="はなしかけてきゅぴ...";
+    sendBtn.disabled=false;
+  }
+}
 
 async function sendText(t){
-  if(!t||busy)return;
-  busy=true; // 先にbusy設定してからstopL。onendが発火しても再開されない
-  stopL();
+  if(!t||state==="thinking")return;
+  // 聞き取り中なら止める
+  if(state==="listening")stopL();
+  setState("thinking");
   addMsg(t,"user");input.value="";input.style.height="auto";
-  setB(true);setS("かんがえちゅうきゅぴ...");
   try{
     const r=await fetch("/ask",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:buildCtx()})});
     const j=await r.json();const reply=j.response||j.error||"(empty)";
-    addMsg(reply,"ai");setB(false);
-    if(autoSpeakCb.checked)speak(reply);
-    else goIdle();
-  }catch(e){addMsg("Error: "+e.message,"ai");setB(false);goIdle()}
+    addMsg(reply,"ai");
+    if(autoSpeakCb.checked){speak(reply)}
+    else{setState("idle");maybeAutoListen()}
+  }catch(e){addMsg("Error: "+e.message,"ai");setState("idle");maybeAutoListen()}
 }
 
-// idle状態に戻る（ハンズフリーONなら聞き取り再開）
-function goIdle(){
-  setCS("");setS("きいてるきゅぴ!");
-  if(autoListenCb.checked)setTimeout(()=>startL(),500);
+// ハンズフリーONなら聞き取り開始
+function maybeAutoListen(){
+  if(autoListenCb.checked&&state==="idle")setTimeout(()=>{if(state==="idle")startL()},500);
 }
 
-newBtn.onclick=()=>{if(busy)return;stopL();speechSynthesis.cancel();speaking=false;messages=[];saveH(messages);chatEl.innerHTML="";setCS("");setS("きいてるきゅぴ!")};
+newBtn.onclick=()=>{if(state==="thinking")return;stopL();speechSynthesis.cancel();speaking=false;messages=[];saveH(messages);chatEl.innerHTML="";setState("idle")};
 
 // ============================================
-// TTS - 喋り終わるまで他は何もしない
+// TTS
 // ============================================
 let lastSpokenText="";
+let currentUtterance=null;
+
 function speak(t){
-  // 先にspeaking=trueにしてからstopL。onendが発火しても再開されない
-  speaking=true;
   stopL();
+  // cancel前にonendが発火しても無視するためフラグ
+  if(currentUtterance){currentUtterance.onend=null;currentUtterance.onerror=null}
   speechSynthesis.cancel();
+  setState("speaking");
+  speaking=true;
+
   let c=t.replace(/```[\s\S]*?```/g,"コードブロック省略。").replace(/`[^`]+`/g,"").replace(/[#*_~>]/g,"").replace(/\n{2,}/g,"\n");
   if(c.length>1000)c=c.slice(0,1000)+"...以下省略";
   lastSpokenText=c;
+
   const u=new SpeechSynthesisUtterance(c);u.lang="ja-JP";u.rate=1.1;
   const v=speechSynthesis.getVoices(),ja=v.find(x=>x.lang.startsWith("ja"));if(ja)u.voice=ja;
-  setCS("speaking");stopBtn.classList.add("show");setS("おはなしちゅうきゅぴ...");
-  u.onend=()=>{speaking=false;stopBtn.classList.remove("show");goIdle()};
-  u.onerror=u.onend;
+  currentUtterance=u;
+
+  u.onend=()=>{speaking=false;currentUtterance=null;setState("idle");maybeAutoListen()};
+  u.onerror=()=>{speaking=false;currentUtterance=null;setState("idle");maybeAutoListen()};
   speechSynthesis.speak(u);
 }
 
-function stopSpeaking(){speechSynthesis.cancel();speaking=false;stopBtn.classList.remove("show");goIdle()}
+function stopSpeaking(){
+  if(currentUtterance){currentUtterance.onend=null;currentUtterance.onerror=null}
+  speechSynthesis.cancel();speaking=false;currentUtterance=null;
+  setState("idle");maybeAutoListen();
+}
 stopBtn.onclick=stopSpeaking;
 
 statusEl.onclick=()=>{
-  if(speaking){stopSpeaking()}
-  else if(lastSpokenText&&!busy&&!listening){speak(lastSpokenText)}
+  if(state==="speaking"){stopSpeaking()}
+  else if(lastSpokenText&&state==="idle"){speak(lastSpokenText)}
 };
 
 speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();speechSynthesis.getVoices();
@@ -611,10 +647,7 @@ function initR(){
   recognition.interimResults=true;
   recognition.continuous=false;
 
-  recognition.onstart=()=>{
-    listening=true;micBtn.classList.add("listening");
-    setCS("listening");setS("きいてるきゅぴ...");
-  };
+  recognition.onstart=()=>{setState("listening")};
 
   recognition.onresult=(e)=>{
     let final="",interim="";
@@ -626,38 +659,37 @@ function initR(){
   };
 
   recognition.onend=()=>{
-    listening=false;micBtn.classList.remove("listening");
-    // 認識結果があれば送信
+    // stateがlistening以外なら何もしない（abort等で止めた場合）
+    if(state!=="listening"){return}
     const txt=input.value.trim();
-    if(txt&&!busy&&!speaking){sendText(txt)}
-    else if(!speaking&&!busy){setCS("");setS("きいてるきゅぴ!")}
+    if(txt){sendText(txt)}
+    else{setState("idle");maybeAutoListen()}
   };
 
   recognition.onerror=(e)=>{
-    listening=false;micBtn.classList.remove("listening");
-    if(e.error!=="no-speech"&&e.error!=="aborted"){
+    if(state==="listening"&&e.error!=="no-speech"&&e.error!=="aborted"){
       setS("エラーきゅぴ: "+e.error);
     }
+    if(state==="listening"){setState("idle");maybeAutoListen()}
   };
 }
 
 function startL(){
-  if(listening||speaking||busy)return; // 競合する状態なら開始しない
+  if(state!=="idle")return;
   if(!recognition)initR();
   if(!recognition)return;
   try{recognition.start()}catch(e){}
 }
 function stopL(){
-  if(!recognition||!listening)return;
+  if(!recognition)return;
   try{recognition.abort()}catch(e){}
-  listening=false;micBtn.classList.remove("listening");
 }
 
-micBtn.onclick=()=>{if(listening)stopL();else startL()};
+micBtn.onclick=()=>{if(state==="listening"){stopL();setState("idle")}else startL()};
 
 autoListenCb.onchange=()=>{
-  if(!autoListenCb.checked){stopL();setCS("");setS("きいてるきゅぴ!")}
-  else if(!speaking&&!busy){startL()}
+  if(!autoListenCb.checked){if(state==="listening"){stopL();setState("idle")}}
+  else{maybeAutoListen()}
 };
 
 sendBtn.onclick=()=>sendText(input.value.trim());
@@ -692,11 +724,11 @@ function cleanPoop(el){
   el.style.pointerEvents="none";
   setTimeout(()=>{el.remove();poopCount--;},400);
   showHappy(el);
-  if(!busy){
+  if(state==="idle"||state==="listening"){
     setCS("happy");
     const phrases=["きれいきゅぴ～!","ありがとうきゅぴ!","すっきりきゅぴ～!","ぴかぴかきゅぴ!"];
     setS(phrases[Math.floor(Math.random()*phrases.length)]);
-    setTimeout(()=>{if(!busy&&!speaking&&!listening)setCS("")},1500);
+    setTimeout(()=>{if(state==="idle")setCS("")},1500);
   }
 }
 
@@ -724,7 +756,7 @@ setTimeout(spawnPoop,15000);
 // --- Monologue (periodic thoughts via Claude) ---
 let monoLock=false;
 async function doMonologue(){
-  if(busy||speaking||listening||monoLock)return;
+  if(state!=="idle"||monoLock)return;
   monoLock=true;
   try{
     const topics=["今の気分","最近気になること","ユーザーへの一言","好きな食べ物","天気について思うこと","今日やりたいこと"];
@@ -735,9 +767,9 @@ async function doMonologue(){
     });
     const j=await r.json();
     const txt=j.response||"";
-    if(txt&&!busy&&!speaking){
+    if(txt&&state==="idle"){
       setS(txt.slice(0,30));
-      setTimeout(()=>{if(!busy&&!speaking&&!listening)setS("きいてるきゅぴ!")},5000);
+      setTimeout(()=>{if(state==="idle")setS("きいてるきゅぴ!")},5000);
     }
   }catch(e){}
   monoLock=false;
@@ -755,7 +787,7 @@ infoBtn.onclick=()=>infoOv.classList.add("show");
 infoClose.onclick=()=>infoOv.classList.remove("show");
 infoOv.onclick=(e)=>{if(e.target===infoOv)infoOv.classList.remove("show")};
 
-initR();renderH();setS("きいてるきゅぴ!");
+initR();renderH();setState("idle");
 // Auto-start listening on page load
 if(autoListenCb.checked)setTimeout(()=>startL(),1000);
 </script>
