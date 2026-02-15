@@ -601,8 +601,19 @@ statusEl.onclick=()=>{
 speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();speechSynthesis.getVoices();
 
 // ============================================
-// STT - continuous:false、1回聞いて1回送信
+// STT - continuous:true、発話バッファ＋無音タイマーで送信
 // ============================================
+let sttBuffer=""; // isFinalの結果を溜めるバッファ
+let sttTimer=null; // 無音検出タイマー
+const STT_SILENCE_MS=2000; // 2秒無音で送信
+
+function flushStt(){
+  sttTimer=null;
+  const txt=sttBuffer.trim();
+  sttBuffer="";
+  if(txt)sendText(txt);
+}
+
 function initR(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){addMsg("このブラウザは音声認識非対応です","system");return}
@@ -617,19 +628,36 @@ function initR(){
   };
 
   recognition.onresult=(e)=>{
+    // タイマーリセット（新しい音声が来たので送信を延期）
+    if(sttTimer){clearTimeout(sttTimer);sttTimer=null}
+
     for(let i=e.resultIndex;i<e.results.length;i++){
       if(e.results[i].isFinal){
         const txt=e.results[i][0].transcript.trim();
-        if(txt){input.value=txt;sendText(txt)}
+        if(txt){
+          sttBuffer+=(sttBuffer?" ":"")+txt;
+          input.value=sttBuffer;
+        }
       }else{
-        input.value=e.results[i][0].transcript;
+        // interimは現在のバッファ＋進行中テキストを表示
+        input.value=sttBuffer+(sttBuffer?" ":"")+e.results[i][0].transcript;
       }
+    }
+
+    // バッファに何かあれば無音タイマー開始（2秒後に送信）
+    if(sttBuffer){
+      sttTimer=setTimeout(flushStt,STT_SILENCE_MS);
     }
   };
 
   recognition.onend=()=>{
     // continuous=trueでも稀に切れることがある
     listening=false;micBtn.classList.remove("listening");
+    // 切れた時にバッファがあれば即送信
+    if(sttBuffer.trim()){
+      if(sttTimer){clearTimeout(sttTimer);sttTimer=null}
+      flushStt();
+    }
     if(!speaking&&!busy&&autoListenCb.checked){
       try{recognition.start()}catch(e){}
     }else if(!speaking&&!busy){setCS("");setS("きいてるきゅぴ!")}
@@ -650,6 +678,8 @@ function startL(){
   try{recognition.start()}catch(e){}
 }
 function stopL(){
+  if(sttTimer){clearTimeout(sttTimer);sttTimer=null}
+  sttBuffer="";
   if(!recognition||!listening)return;
   try{recognition.abort()}catch(e){}
   listening=false;micBtn.classList.remove("listening");
