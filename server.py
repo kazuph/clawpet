@@ -563,6 +563,13 @@ function setState(s){
     chatEl.scrollTop=chatEl.scrollHeight;
     input.placeholder="かんがえちゅうきゅぴ...";
     sendBtn.disabled=true;
+    // 相槌：考え中を読み上げ
+    if(autoSpeakCb.checked){
+      const ack=new SpeechSynthesisUtterance("かんがえちゅうきゅぴ");
+      ack.lang="ja-JP";ack.rate=1.2;
+      const v=speechSynthesis.getVoices(),ja=v.find(x=>x.lang.startsWith("ja"));if(ja)ack.voice=ja;
+      speechSynthesis.speak(ack);
+    }
   }else if(s==="speaking"){
     setCS("speaking");setS("おはなしちゅうきゅぴ...");
     micBtn.classList.remove("listening");
