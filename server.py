@@ -647,27 +647,25 @@ function initR(){
   recognition.interimResults=true;
   recognition.continuous=false;
 
-  let lastResult=""; // この認識セッションの結果
-
-  recognition.onstart=()=>{lastResult="";input.value="";setState("listening")};
+  recognition.onstart=()=>{input.value="";setState("listening")};
 
   recognition.onresult=(e)=>{
-    // continuous:falseなのでresults[0]だけ見る
     const r=e.results[0];
     input.value=r[0].transcript;
-    if(r.isFinal)lastResult=r[0].transcript.trim();
+    // isFinalになったら即送信。stateチェックで二重送信防止
+    if(r.isFinal&&state==="listening"){
+      const txt=r[0].transcript.trim();
+      if(txt)sendText(txt);
+    }
   };
 
+  // onresultで送信済みならstateはthinkingなので何もしない
+  // 音声なしで終了した場合だけここでidle→再リスン
   recognition.onend=()=>{
-    if(state!=="listening"){return}
-    if(lastResult){sendText(lastResult);lastResult=""}
-    else{setState("idle");maybeAutoListen()}
+    if(state==="listening"){setState("idle");maybeAutoListen()}
   };
 
   recognition.onerror=(e)=>{
-    if(state==="listening"&&e.error!=="no-speech"&&e.error!=="aborted"){
-      setS("エラーきゅぴ: "+e.error);
-    }
     if(state==="listening"){setState("idle");maybeAutoListen()}
   };
 }
