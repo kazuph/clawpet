@@ -674,7 +674,10 @@ function startL(){
   if(state!=="idle")return;
   if(!recognition)initR();
   if(!recognition)return;
-  try{recognition.start()}catch(e){}
+  try{recognition.start()}catch(e){
+    // abort直後はstart失敗する。少し待ってリトライ
+    setTimeout(()=>{if(state==="idle")try{recognition.start()}catch(e2){}},300);
+  }
 }
 function stopL(){
   if(!recognition)return;
