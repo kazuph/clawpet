@@ -663,6 +663,8 @@ function initR(){
   // 音声なしで終了した場合だけここでidle→再リスン
   recognition.onend=()=>{
     if(state==="listening"){setState("idle");maybeAutoListen()}
+    // abort後のstart待ちがあればリトライ
+    if(pendingStart){pendingStart=false;setTimeout(()=>{if(state==="idle")startL()},100)}
   };
 
   recognition.onerror=(e)=>{
@@ -670,13 +672,14 @@ function initR(){
   };
 }
 
+let pendingStart=false;
 function startL(){
   if(state!=="idle")return;
   if(!recognition)initR();
   if(!recognition)return;
   try{recognition.start()}catch(e){
-    // abort直後はstart失敗する。少し待ってリトライ
-    setTimeout(()=>{if(state==="idle")try{recognition.start()}catch(e2){}},300);
+    // abort処理中。onendを待ってからリトライ
+    pendingStart=true;
   }
 }
 function stopL(){
