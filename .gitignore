@@ -2,3 +2,8 @@
 screenshot.py
 __pycache__/
 node_modules/
+_build/
+target/
+cache/
+*.png
+.mooncakes/

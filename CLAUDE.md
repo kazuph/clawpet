@@ -2,31 +2,39 @@
 
 ## After Code Changes Routine
 
-When modifying `server.js`, `index.html`, or any source code:
+When modifying `src/*.mbt`, `src/stub.c`, or `index.html`:
 
-1. Kill existing server: `pkill -f "node.*server.js"`
-2. Restart: `export $(cat ~/voice/.env | xargs) && nohup node ~/claude-chat/server.js >> ~/claude-chat/server.log 2>&1 &`
-3. Open Chrome: `termux-open-url "http://127.0.0.1:8888"`
+1. Build: `cd ~/claude-chat && moon build --target native`
+2. Kill existing server: `pkill -f src.exe`
+3. Restart: `export $(cat ~/voice/.env | xargs) && nohup ~/claude-chat/_build/native/release/build/src/src.exe >> ~/claude-chat/server.log 2>&1 &`
+4. Open Chrome: `termux-open-url "http://127.0.0.1:8888"`
 
-Always perform steps 1-3 immediately after any source code change.
+Always perform steps 1-4 immediately after any source code change.
 
 ## Architecture
 
-- **server.js** — Node.js HTTP server (port 8888). Gemini API, TTS proxy, serves index.html
-- **index.html** — Full frontend (HTML/CSS/JS) served by server.js. Web Audio API for TTS playback
-- **tts_server.py** — Python TTS server (port 9093). Persistent piper process in proot-distro with LRU cache. ~500ms/sentence
-- **LLM** — Gemini 2.0 Flash with Google Search grounding
-- **TTS** — piper via `proot-distro` (OpenJTalk phonemizer + tsukuyomi ONNX model)
+- **src/*.mbt + src/stub.c** — MoonBit native binary (C backend + FFI). Single 225KB executable. Handles HTTP server (port 8888), Gemini API (libcurl), TTS (persistent piper process), static file serving.
+- **index.html** — Full frontend (HTML/CSS/JS). Web Audio API for TTS playback.
+- **No Python, No Node.js** — Everything runs as a single native binary.
+
+### MoonBit Source Files
+- `src/main.mbt` — Entry point, server main loop
+- `src/handler.mbt` — Request routing, endpoint handlers, system prompt
+- `src/json.mbt` — JSON building and extraction helpers
+- `src/ffi.mbt` — All extern "C" FFI declarations
+- `src/stub.c` — C FFI: TCP sockets, HTTP parsing, libcurl, piper process, file I/O
 
 ## Prerequisites (external, not in repo)
 
-- `~/piper-tts/piper/` — piper binary + libs (download from piper releases)
+- MoonBit toolchain (`moon`, `moonc`)
+- `~/piper-tts/piper/` — piper binary + libs
 - `~/piper-tts/models/tsukuyomi/` — tsukuyomi.onnx + .json config
 - `~/piper-tts/open_jtalk_dic/` — OpenJTalk dictionary
 - `proot-distro` with Debian installed
+- `libcurl` dev package (`pkg install libcurl`)
 
 ## Startup
 
-1. Start TTS server first: `python3 ~/claude-chat/tts_server.py &`
-2. Start main server: `export $(cat ~/voice/.env | xargs) && node ~/claude-chat/server.js &`
+1. Build: `moon build --target native`
+2. Start: `export $(cat ~/voice/.env | xargs) && ./_build/native/release/build/src/src.exe`
 3. Open: `termux-open-url "http://127.0.0.1:8888"`
