@@ -2,27 +2,31 @@
 
 ## After Code Changes Routine
 
-When modifying `server.py` or any source code:
+When modifying `server.js`, `index.html`, or any source code:
 
-1. Kill existing server process: `pkill -f "python3 server.py"`
-2. Restart server: `nohup python3 /data/data/com.termux/files/home/claude-chat/server.py >> /data/data/com.termux/files/home/claude-chat/server.log 2>&1 &`
-3. Open Chrome: `am start -a android.intent.action.VIEW -d "http://127.0.0.1:8888"`
-4. Commit and push: `git add . && git commit && git push`
+1. Kill existing server: `pkill -f "node.*server.js"`
+2. Restart: `export $(cat ~/voice/.env | xargs) && nohup node ~/claude-chat/server.js >> ~/claude-chat/server.log 2>&1 &`
+3. Open Chrome: `termux-open-url "http://127.0.0.1:8888"`
 
-Always perform steps 1-3 immediately after any source code change. Step 4 on every fix/feature.
+Always perform steps 1-3 immediately after any source code change.
 
-## Pre-commit Hook (E2E Tests)
+## Architecture
 
-Git pre-commit hook runs `test_e2e.py` automatically before every commit.
-- Server must be running on port 8888 for tests to pass
-- 50 Selenium tests cover: initial state, info modal, toggles, send/response, duplicates, NEW button, speak/stop, poop system, persistence
-- If tests fail, commit is blocked
-- Run manually: `python3 test_e2e.py`
-- Hook location: `.git/hooks/pre-commit`
+- **server.js** — Node.js HTTP server (port 8888). Gemini API, TTS proxy, serves index.html
+- **index.html** — Full frontend (HTML/CSS/JS) served by server.js. Web Audio API for TTS playback
+- **tts_server.py** — Python TTS server (port 9093). Persistent piper process in proot-distro with LRU cache. ~500ms/sentence
+- **LLM** — Gemini 2.0 Flash with Google Search grounding
+- **TTS** — piper via `proot-distro` (OpenJTalk phonemizer + tsukuyomi ONNX model)
 
-## Kill Server Properly
+## Prerequisites (external, not in repo)
 
-Always kill by PID, not just `pkill -f`. The `-9` flag and waiting for port release:
-```bash
-kill -9 $(pgrep -f "python3 server.py") 2>/dev/null; sleep 3
-```
+- `~/piper-tts/piper/` — piper binary + libs (download from piper releases)
+- `~/piper-tts/models/tsukuyomi/` — tsukuyomi.onnx + .json config
+- `~/piper-tts/open_jtalk_dic/` — OpenJTalk dictionary
+- `proot-distro` with Debian installed
+
+## Startup
+
+1. Start TTS server first: `python3 ~/claude-chat/tts_server.py &`
+2. Start main server: `export $(cat ~/voice/.env | xargs) && node ~/claude-chat/server.js &`
+3. Open: `termux-open-url "http://127.0.0.1:8888"`

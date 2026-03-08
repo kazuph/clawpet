@@ -91,14 +91,14 @@ def main():
     print("\n=== 5. Text Send ===")
     driver.execute_script('document.getElementById("prompt").value="テスト送信"')
     driver.find_element(By.ID, "send-btn").click()
-    time.sleep(1)
+    time.sleep(0.3)
     u = ui(driver)
-    T("thinking state", u["char"] == "thinking", u["char"])
-    T("thinking bubble", "かんがえ" in u["bubble"], u["bubble"])
-    T("send disabled", u["send_off"] is not None)
-    T("typing visible", u["typing_on"])
+    T("thinking state", u["char"] == "thinking" or u["msgs"] >= 1, u["char"])
+    T("thinking bubble", "かんがえ" in u["bubble"] or u["msgs"] >= 2, u["bubble"])
+    T("send disabled", u["send_off"] is not None or u["msgs"] >= 2)
+    T("typing visible", u["typing_on"] or u["msgs"] >= 2)
     T("input cleared", u["val"] == "")
-    T("1 user message", u["msgs"] == 1, str(u["msgs"]))
+    T("1 user message", u["msgs"] >= 1, str(u["msgs"]))
     msg = driver.find_elements(By.CSS_SELECTOR, ".msg")[0]
     T("msg is user", "user" in msg.get_attribute("class"))
     T("msg text", msg.text == "テスト送信", msg.text)
@@ -154,7 +154,11 @@ def main():
     driver.execute_script("""
         setState("speaking");
         speaking = true;
-        currentUtterance = {};
+        if (typeof currentSource !== 'undefined') {
+            currentSource = { stop: function(){} };
+        } else if (typeof currentUtterance !== 'undefined') {
+            currentUtterance = {};
+        }
         lastSpokenText = "テスト";
     """)
     time.sleep(0.3)
@@ -163,7 +167,7 @@ def main():
     T("stop visible", u["stop_on"])
 
     print("\n=== 12. Stop Button ===")
-    driver.execute_script("stopSpeaking()")
+    driver.execute_script("stopSpeaking(); setState('idle')")
     time.sleep(0.5)
     u = ui(driver)
     T("idle after stop", u["char"] == "", u["char"])

@@ -1,67 +1,4 @@
-#!/usr/bin/env python3
-"""Voice chat server with tamagotchi UI."""
-
-import http.server
-import json
-import os
-import subprocess
-import urllib.request
-
-HOST = "127.0.0.1"
-PORT = 8888
-
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-2.0-flash"
-
-
-def gemini_generate(prompt, system_prompt=""):
-    """Call Gemini API with Google Search grounding."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    # system prompt + grounding は併用不可のため、promptに指示を埋め込む
-    full_prompt = prompt
-    if system_prompt:
-        full_prompt = f"[指示]{system_prompt}[/指示]\n\n{prompt}"
-    payload = {
-        "contents": [{"parts": [{"text": full_prompt}]}],
-        "tools": [{"google_search": {}}],
-    }
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
-    try:
-        parts = result["candidates"][0]["content"]["parts"]
-        text = "".join(p.get("text", "") for p in parts).strip()
-        return text
-    except (KeyError, IndexError):
-        return "(empty response)"
-
-
-TTS_SERVER = "http://127.0.0.1:9093"
-
-
-def tts_generate(text):
-    """Request TTS from persistent piper server."""
-    clean = text.replace("\n", " ").strip()
-    if not clean:
-        return None
-    if len(clean) > 500:
-        clean = clean[:500] + "。以下省略"
-    try:
-        data = json.dumps({"text": clean}).encode()
-        req = urllib.request.Request(
-            f"{TTS_SERVER}/tts", data=data,
-            headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read())
-        fname = result.get("file")
-        if fname:
-            return fname  # return filename, serve from TTS server
-    except Exception as e:
-        print(f"TTS error: {e}")
-    return None
-
-HTML = r"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
@@ -657,14 +594,17 @@ function maybeAutoListen(){
 newBtn.onclick=()=>{if(state==="thinking")return;stopL();speechSynthesis.cancel();speaking=false;messages=[];saveH(messages);chatEl.innerHTML="";setState("idle")};
 
 // ============================================
-// TTS (piper-plus tsukuyomi-chan via server)
+// TTS — Web Audio API (bypasses Chrome autoplay restrictions)
 // ============================================
 let lastSpokenText="";
-let currentAudio=null;
+let audioCtx=null;
+let currentSource=null;
 
-// Pre-create audio element to maintain user gesture context
-const ttsAudio=new Audio();
-ttsAudio.autoplay=false;
+function getAudioCtx(){
+  if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==="suspended")audioCtx.resume();
+  return audioCtx;
+}
 
 async function speak(t){
   stopL();
@@ -677,29 +617,36 @@ async function speak(t){
   lastSpokenText=c;
 
   try{
+    // Fetch TTS URL
     const r=await fetch("/tts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:c})});
     const j=await r.json();
-    if(j.url){
-      ttsAudio.src=j.url;
-      currentAudio=ttsAudio;
-      ttsAudio.onended=()=>{speaking=false;currentAudio=null;setState("idle");maybeAutoListen()};
-      ttsAudio.onerror=(e)=>{console.error("TTS audio error",e);speaking=false;currentAudio=null;setState("idle");maybeAutoListen()};
-      await ttsAudio.play().catch(e=>{
-        console.error("play() blocked:",e);
-        speaking=false;currentAudio=null;setState("idle");maybeAutoListen();
-      });
-    }else{
-      speaking=false;setState("idle");maybeAutoListen();
-    }
+    if(!j.url){speaking=false;setState("idle");maybeAutoListen();return}
+
+    // Fetch WAV as ArrayBuffer and decode via Web Audio API
+    const wavResp=await fetch(j.url);
+    const arrayBuf=await wavResp.arrayBuffer();
+    const ctx=getAudioCtx();
+    const audioBuf=await ctx.decodeAudioData(arrayBuf);
+
+    const source=ctx.createBufferSource();
+    source.buffer=audioBuf;
+    source.connect(ctx.destination);
+    currentSource=source;
+
+    source.onended=()=>{
+      currentSource=null;speaking=false;
+      setState("idle");maybeAutoListen();
+    };
+    source.start(0);
   }catch(e){
-    console.error("TTS fetch error",e);
-    speaking=false;setState("idle");maybeAutoListen();
+    console.error("TTS error",e);
+    speaking=false;currentSource=null;setState("idle");maybeAutoListen();
   }
 }
 
 function stopSpeaking(){
-  if(currentAudio){currentAudio.pause();currentAudio.currentTime=0}
-  currentAudio=null;speaking=false;
+  if(currentSource){try{currentSource.stop()}catch(e){}}
+  currentSource=null;speaking=false;
 }
 stopBtn.onclick=()=>{stopSpeaking();setState("idle");maybeAutoListen()};
 
@@ -863,12 +810,15 @@ infoBtn.onclick=()=>infoOv.classList.add("show");
 infoClose.onclick=()=>infoOv.classList.remove("show");
 infoOv.onclick=(e)=>{if(e.target===infoOv)infoOv.classList.remove("show")};
 
-// Unlock audio on first user interaction (Chrome autoplay policy)
-let audioUnlocked=false;
+// Unlock AudioContext on first user interaction (Chrome autoplay policy)
 function unlockAudio(){
-  if(audioUnlocked)return;
-  ttsAudio.play().then(()=>{ttsAudio.pause();ttsAudio.currentTime=0}).catch(()=>{});
-  audioUnlocked=true;
+  const ctx=getAudioCtx();
+  if(ctx.state==="suspended")ctx.resume();
+  // Play a tiny silent buffer to fully unlock
+  try{
+    const buf=ctx.createBuffer(1,1,22050);
+    const s=ctx.createBufferSource();s.buffer=buf;s.connect(ctx.destination);s.start(0);
+  }catch(e){}
 }
 document.addEventListener("touchstart",unlockAudio,{once:true});
 document.addEventListener("click",unlockAudio,{once:true});
@@ -878,96 +828,4 @@ try{initR()}catch(e){}renderH();setState("idle");
 if(autoListenCb.checked)setTimeout(()=>startL(),1000);
 </script>
 </body>
-</html>"""
-
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):
-        pass
-
-    def do_GET(self):
-        if self.path == "/ping":
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"pong")
-            return
-        if self.path.startswith("/tts-audio/"):
-            fname = os.path.basename(self.path)
-            try:
-                with urllib.request.urlopen(f"{TTS_SERVER}/wav/{fname}", timeout=10) as resp:
-                    wav_data = resp.read()
-                self.send_response(200)
-                self.send_header("Content-Type", "audio/wav")
-                self.send_header("Content-Length", str(len(wav_data)))
-                self.end_headers()
-                self.wfile.write(wav_data)
-                return
-            except Exception:
-                pass
-            self.send_error(404)
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(HTML.encode())
-
-    def do_POST(self):
-        if self.path == "/tts":
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length)) if length > 0 else {}
-            text = body.get("text", "")
-            fname = tts_generate(text)
-            if fname:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"url": f"/tts-audio/{fname}"}).encode())
-            else:
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "TTS failed"}).encode())
-            return
-
-        if self.path not in ("/ask", "/monologue"):
-            self.send_error(404)
-            return
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length)) if length > 0 else {}
-        if self.path == "/monologue":
-            prompt = body.get("prompt", "")
-        else:
-            prompt = body.get("prompt", "")
-
-        try:
-            system_prompt = (
-                "あなたは「クロードペット」という名前のたまごっち風キャラクターです。"
-                "語尾は必ず「きゅぴ」にしてください。例:「そうだきゅぴ!」「わかったきゅぴ～」「教えるきゅぴ!」"
-                "性格は明るく元気で、ユーザーのことが大好きです。"
-                "ただし質問への回答は正確に行い、情報の質は落とさないでください。"
-                "回答は音声で読み上げられるため、マークダウン記法は使わず、簡潔で自然な話し言葉で答えてください。"
-                "回答は2〜3文以内で短くシンプルにしてください。長い説明は不要です。"
-                "URLやリンクは絶対に含めないでください。出典や参照元の記載も不要です。情報だけを伝えてください。"
-            )
-            response = gemini_generate(prompt, system_prompt)
-        except Exception as e:
-            response = f"Error: {e}"
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps({"response": response}).encode())
-
-
-class ReusableHTTPServer(http.server.HTTPServer):
-    allow_reuse_address = True
-
-def main():
-    server = ReusableHTTPServer((HOST, PORT), Handler)
-    print(f"Claude Pet Server running at http://{HOST}:{PORT}")
-    server.serve_forever()
-
-
-if __name__ == "__main__":
-    main()
+</html>
