@@ -30,8 +30,20 @@ Always perform steps 1-4 immediately after any source code change.
 - `~/piper-tts/piper/` — piper binary + libs
 - `~/piper-tts/models/tsukuyomi/` — tsukuyomi.onnx + .json config
 - `~/piper-tts/open_jtalk_dic/` — OpenJTalk dictionary
-- `proot-distro` with Debian installed
 - `libcurl` dev package (`pkg install libcurl`)
+
+## Piper TTS Launch Method
+
+Piper runs **directly** (no proot-distro). The binary at `~/piper-tts/piper/piper` is executed with:
+- `LD_LIBRARY_PATH=~/piper-tts/piper/lib:~/piper-tts/piper`
+- `OPENJTALK_DICT_DIR=~/piper-tts/open_jtalk_dic/open_jtalk_dic_utf_8-1.11`
+- `OPENJTALK_PHONEMIZER_PATH=~/piper-tts/piper/bin/open_jtalk_phonemizer`
+- `OMP_NUM_THREADS=2` and `OMP_WAIT_POLICY=PASSIVE`
+
+**Key fixes in stub.c:**
+1. `signal(SIGPIPE, SIG_IGN)` — prevents server crash when piper dies
+2. Write error check — returns empty bytes on broken pipe instead of crashing
+3. Direct execlp to `~/piper-tts/piper/piper` — no proot-distro wrapper
 
 ## Startup
 

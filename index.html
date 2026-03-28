@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Claude Pet</title>
+<title>Crush Pet</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
 <style>
@@ -378,7 +378,7 @@ body{
 <div id="device">
   <!-- Top -->
   <div id="top-bar">
-    <h1>CLAUDE PET</h1>
+    <h1>CRUSH PET</h1>
     <div style="display:flex;gap:6px;align-items:center">
       <button id="info-btn" title="about">i</button>
       <button id="new-btn" class="btn">NEW</button>
@@ -388,11 +388,11 @@ body{
   <!-- Info Modal -->
   <div id="info-overlay">
     <div id="info-modal">
-      <h2>CLAUDE PET とは？</h2>
+      <h2>CRUSH PET とは？</h2>
 
       <div class="section">
         <h3>これは何？</h3>
-        <p>スマホだけで AI と音声対話できるアプリです。Termux 上のローカルサーバーが Claude AI を呼び出し、ブラウザが音声の入出力を担当します。</p>
+        <p>スマホだけで AI と音声対話できるアプリです。Termux 上のローカルサーバーが Gemini API を呼び出し、ブラウザが音声の入出力を担当します。</p>
       </div>
 
       <div class="section">
@@ -408,7 +408,7 @@ body{
 
       <div class="section">
         <h3>しくみ</h3>
-        <p>Chrome の Web Speech API で音声認識・読み上げ → Python サーバー → Claude CLI が応答生成。全て端末内で完結します。</p>
+        <p>Chrome の Web Speech API で音声認識・読み上げ → MoonBit サーバー → Gemini API が応答生成。全て端末内で完結します。</p>
       </div>
 
       <div class="section">
@@ -423,7 +423,7 @@ body{
 
       <div style="text-align:center;margin-top:8px">
         <span class="tag">Termux</span>
-        <span class="tag">Claude AI</span>
+        <span class="tag">Gemini AI</span>
         <span class="tag">Web Speech API</span>
         <span class="tag">Python</span>
         <span class="tag">ハンズフリー</span>
@@ -616,31 +616,46 @@ async function speak(t){
   if(c.length>500)c=c.slice(0,500)+"。以下省略";
   lastSpokenText=c;
 
+  // Try Piper TTS first
   try{
-    // Fetch TTS URL
     const r=await fetch("/tts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:c})});
     const j=await r.json();
-    if(!j.url){speaking=false;setState("idle");maybeAutoListen();return}
+    if(j.url){
+      const wavResp=await fetch(j.url);
+      const arrayBuf=await wavResp.arrayBuffer();
+      const ctx=getAudioCtx();
+      const audioBuf=await ctx.decodeAudioData(arrayBuf);
+      const source=ctx.createBufferSource();
+      source.buffer=audioBuf;
+      source.connect(ctx.destination);
+      currentSource=source;
+      source.onended=()=>{
+        currentSource=null;speaking=false;
+        setState("idle");maybeAutoListen();
+      };
+      source.start(0);
+      return;
+    }
+  }catch(e){
+    console.log("Piper TTS failed, falling back to Web Speech API",e);
+  }
 
-    // Fetch WAV as ArrayBuffer and decode via Web Audio API
-    const wavResp=await fetch(j.url);
-    const arrayBuf=await wavResp.arrayBuffer();
-    const ctx=getAudioCtx();
-    const audioBuf=await ctx.decodeAudioData(arrayBuf);
-
-    const source=ctx.createBufferSource();
-    source.buffer=audioBuf;
-    source.connect(ctx.destination);
-    currentSource=source;
-
-    source.onended=()=>{
-      currentSource=null;speaking=false;
+  // Fallback to Web Speech API
+  try{
+    const utterance=new SpeechSynthesisUtterance(c);
+    utterance.lang="ja-JP";
+    utterance.onend=()=>{
+      speaking=false;
       setState("idle");maybeAutoListen();
     };
-    source.start(0);
+    utterance.onerror=(e)=>{
+      console.error("Speech synthesis error",e);
+      speaking=false;setState("idle");maybeAutoListen();
+    };
+    speechSynthesis.speak(utterance);
   }catch(e){
-    console.error("TTS error",e);
-    speaking=false;currentSource=null;setState("idle");maybeAutoListen();
+    console.error("TTS fallback error",e);
+    speaking=false;setState("idle");maybeAutoListen();
   }
 }
 
@@ -776,7 +791,7 @@ scheduleNextPoop();
 // Also first poop after 15s so user can see it
 setTimeout(spawnPoop,15000);
 
-// --- Monologue (periodic thoughts via Claude) ---
+// --- Monologue (periodic thoughts via Gemini) ---
 let monoLock=false;
 async function doMonologue(){
   if(state!=="idle"||monoLock)return;

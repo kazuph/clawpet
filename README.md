@@ -6,7 +6,7 @@ Termux + Chrome で動く、たまごっち風 AI 音声チャットペット。
 
 ## 特徴
 
-- **完全無料** — 追加APIキー不要。Claude CLI + Chrome内蔵APIだけで動作
+- **完全無料** — Gemini APIキーで動作
 - **音声対話** — Chrome Web Speech API で音声認識・読み上げ
 - **ハンズフリー** — 散歩中でもスマホに話しかけるだけで対話できる
 - **たまごっち風UI** — ピクセルフォント、レトロな液晶画面、かわいいペットキャラクター
@@ -19,7 +19,7 @@ Termux + Chrome で動く、たまごっち風 AI 音声チャットペット。
 
 - Android端末
 - [Termux](https://termux.dev/)
-- [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` コマンドが使える状態)
+- [Gemini API キー](https://ai.google.dev/) (無料枠あり)
 - Python 3
 - Chrome ブラウザ
 
@@ -52,20 +52,20 @@ am start -a android.intent.action.VIEW -d "http://127.0.0.1:8888"
 ## 仕組み
 
 ```
-Chrome (音声入力) → Python HTTP サーバー → claude -p (Claude CLI) → Chrome (音声出力)
+Chrome (音声入力) → MoonBit HTTP サーバー → Gemini API → Chrome (音声出力)
 ```
 
 - フロントエンド: HTML/CSS/JS (ピクセルフォント DotGothic16)
-- バックエンド: Python 標準ライブラリのみ (`http.server`)
-- AI: Claude CLI (`--model haiku --effort low`)
+- バックエンド: MoonBit (単一ネイティブバイナリ、Python不要)
+- AI: Gemini API (gemini-2.0-flash)
 - 音声認識: Chrome Web Speech API (`webkitSpeechRecognition`)
-- 音声合成: Chrome SpeechSynthesis API
+- 音声合成: Piper TTS (ローカル音声合成)
 - 依存パッケージ: なし
 
 ## 停止
 
 ```bash
-pkill -f "python3 server.py"
+pkill -f "src.exe"
 ```
 
 ## ライセンス

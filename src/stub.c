@@ -549,6 +549,9 @@ static pid_t piper_pid = -1;
 
 MOONBIT_FFI_EXPORT
 void piper_init_ffi(void) {
+    /* Ignore SIGPIPE to prevent crash when piper process dies */
+    signal(SIGPIPE, SIG_IGN);
+    
     int pipe_in[2], pipe_out[2];
     if (pipe(pipe_in) < 0 || pipe(pipe_out) < 0) {
         fprintf(stderr, "pipe() failed\n");
@@ -569,17 +572,19 @@ void piper_init_ffi(void) {
         close(pipe_in[0]);
         close(pipe_out[1]);
 
-        execlp("proot-distro", "proot-distro", "login", "debian", "--", "bash", "-c",
-            "export OPENJTALK_DICT_DIR=/data/data/com.termux/files/home/piper-tts/open_jtalk_dic/open_jtalk_dic_utf_8-1.11 && "
-            "export OPENJTALK_PHONEMIZER_PATH=/data/data/com.termux/files/home/piper-tts/piper/bin/open_jtalk_phonemizer && "
-            "export LD_LIBRARY_PATH=/data/data/com.termux/files/home/piper-tts/piper/lib:/data/data/com.termux/files/home/piper-tts/piper && "
-            "export OMP_NUM_THREADS=4 && "
-            "export OMP_WAIT_POLICY=PASSIVE && "
-            "exec /data/data/com.termux/files/home/piper-tts/piper/bin/piper "
-            "-m /data/data/com.termux/files/home/piper-tts/models/tsukuyomi/tsukuyomi.onnx "
-            "-c /data/data/com.termux/files/home/piper-tts/models/tsukuyomi/tsukuyomi.onnx.json "
-            "-d /data/data/com.termux/files/usr/tmp/piper_out "
-            "--sentence_silence 0.1 --length_scale 1.0",
+        /* Direct piper execution with library path */
+        char *lib_path = "/data/data/com.termux/files/home/piper-tts/piper/lib:/data/data/com.termux/files/home/piper-tts/piper";
+        setenv("LD_LIBRARY_PATH", lib_path, 1);
+        setenv("OPENJTALK_DICT_DIR", "/data/data/com.termux/files/home/piper-tts/open_jtalk_dic/open_jtalk_dic_utf_8-1.11", 1);
+        setenv("OPENJTALK_PHONEMIZER_PATH", "/data/data/com.termux/files/home/piper-tts/piper/bin/open_jtalk_phonemizer", 1);
+        setenv("OMP_NUM_THREADS", "2", 1);
+        setenv("OMP_WAIT_POLICY", "PASSIVE", 1);
+
+        execlp("/data/data/com.termux/files/home/piper-tts/piper/piper", "piper",
+            "-m", "/data/data/com.termux/files/home/piper-tts/models/tsukuyomi/tsukuyomi.onnx",
+            "-c", "/data/data/com.termux/files/home/piper-tts/models/tsukuyomi/tsukuyomi.onnx.json",
+            "-d", "/data/data/com.termux/files/usr/tmp/piper_out",
+            "--sentence_silence", "0.1", "--length_scale", "1.0",
             (char *)NULL);
         _exit(127);
     }
@@ -635,8 +640,11 @@ moonbit_bytes_t piper_synth_ffi(moonbit_bytes_t text) {
     }
 
     int tlen = strlen(text_s);
-    write(piper_stdin_fd, text_s, tlen);
-    write(piper_stdin_fd, "\n", 1);
+    if (write(piper_stdin_fd, text_s, tlen) < 0 || write(piper_stdin_fd, "\n", 1) < 0) {
+        fprintf(stderr, "Piper write failed (broken pipe)\n");
+        free(text_s);
+        return moonbit_make_bytes_raw(0);
+    }
     free(text_s);
 
     /* Read lines from piper stdout until we get a .wav path */
