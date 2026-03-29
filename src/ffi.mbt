@@ -28,6 +28,10 @@ extern "C" fn close_conn_ffi(fd : Int) = "close_conn_ffi"
 extern "C" fn curl_post_ffi(url : Bytes, body : Bytes) -> Bytes = "curl_post_ffi"
 
 ///|
+/// POST with Bearer token authentication
+extern "C" fn curl_post_bearer_ffi(url : Bytes, body : Bytes, token : Bytes) -> Bytes = "curl_post_bearer_ffi"
+
+///|
 extern "C" fn piper_init_ffi() = "piper_init_ffi"
 
 ///|

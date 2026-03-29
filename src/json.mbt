@@ -32,6 +32,16 @@ fn build_json_response(text : String) -> String {
 }
 
 ///|
+/// Build JSON response with model name like {"response":"...","model":"..."}
+fn build_json_ask_response(text : String, model : String) -> String {
+  "{\"response\":\"" +
+  json_escape(text) +
+  "\",\"model\":\"" +
+  json_escape(model) +
+  "\"}"
+}
+
+///|
 /// Build JSON TTS URL response like {"url":"/tts-audio/xxx.wav"}
 fn build_json_tts_url(fname : String) -> String {
   "{\"url\":\"/tts-audio/" + fname + "\"}"
@@ -53,4 +63,14 @@ fn build_gemini_request(sys_prompt : String, user_prompt : String) -> String {
   "{\"contents\":[{\"parts\":[{\"text\":\"" +
   json_escape(full_prompt) +
   "\"}]}],\"tools\":[{\"google_search\":{}}]}"
+}
+
+///|
+/// Build Fireworks API (OpenAI-compatible) request body
+fn build_fireworks_request(sys_prompt : String, user_prompt : String) -> String {
+  "{\"model\":\"accounts/fireworks/models/kimi-k2p5\",\"messages\":[{\"role\":\"system\",\"content\":\"" +
+  json_escape(sys_prompt) +
+  "\"},{\"role\":\"user\",\"content\":\"" +
+  json_escape(user_prompt) +
+  "\"}],\"max_tokens\":200,\"reasoning_effort\":\"none\"}"
 }

@@ -541,6 +541,55 @@ moonbit_bytes_t curl_post_ffi(moonbit_bytes_t url, moonbit_bytes_t body) {
     return result;
 }
 
+MOONBIT_FFI_EXPORT
+moonbit_bytes_t curl_post_bearer_ffi(moonbit_bytes_t url, moonbit_bytes_t body, moonbit_bytes_t token) {
+    char *url_s = bytes_to_cstr(url);
+    char *body_s = bytes_to_cstr(body);
+    char *token_s = bytes_to_cstr(token);
+
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        free(url_s); free(body_s); free(token_s);
+        return moonbit_make_bytes_raw(0);
+    }
+
+    struct curl_buf resp = { NULL, 0 };
+
+    char auth_header[512];
+    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", token_s);
+    free(token_s);
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, auth_header);
+
+    curl_easy_setopt(curl, CURLOPT_URL, url_s);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_s);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body_s));
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(url_s);
+    free(body_s);
+
+    if (res != CURLE_OK) {
+        fprintf(stderr, "curl error: %s\n", curl_easy_strerror(res));
+        free(resp.data);
+        return moonbit_make_bytes_raw(0);
+    }
+
+    moonbit_bytes_t result = cdata_to_bytes(resp.data, (int32_t)resp.len);
+    free(resp.data);
+    return result;
+}
+
 /* ========== Piper TTS ========== */
 
 static int piper_stdin_fd = -1;
@@ -572,19 +621,17 @@ void piper_init_ffi(void) {
         close(pipe_in[0]);
         close(pipe_out[1]);
 
-        /* Direct piper execution with library path */
-        char *lib_path = "/data/data/com.termux/files/home/piper-tts/piper/lib:/data/data/com.termux/files/home/piper-tts/piper";
-        setenv("LD_LIBRARY_PATH", lib_path, 1);
-        setenv("OPENJTALK_DICT_DIR", "/data/data/com.termux/files/home/piper-tts/open_jtalk_dic/open_jtalk_dic_utf_8-1.11", 1);
-        setenv("OPENJTALK_PHONEMIZER_PATH", "/data/data/com.termux/files/home/piper-tts/piper/bin/open_jtalk_phonemizer", 1);
-        setenv("OMP_NUM_THREADS", "2", 1);
-        setenv("OMP_WAIT_POLICY", "PASSIVE", 1);
-
-        execlp("/data/data/com.termux/files/home/piper-tts/piper/piper", "piper",
-            "-m", "/data/data/com.termux/files/home/piper-tts/models/tsukuyomi/tsukuyomi.onnx",
-            "-c", "/data/data/com.termux/files/home/piper-tts/models/tsukuyomi/tsukuyomi.onnx.json",
-            "-d", "/data/data/com.termux/files/usr/tmp/piper_out",
-            "--sentence_silence", "0.1", "--length_scale", "1.0",
+        execlp("proot-distro", "proot-distro", "login", "debian", "--", "bash", "-c",
+            "export OPENJTALK_DICT_DIR=/data/data/com.termux/files/home/piper-tts/open_jtalk_dic/open_jtalk_dic_utf_8-1.11 && "
+            "export OPENJTALK_PHONEMIZER_PATH=/data/data/com.termux/files/home/piper-tts/piper/bin/open_jtalk_phonemizer && "
+            "export LD_LIBRARY_PATH=/data/data/com.termux/files/home/piper-tts/piper/lib:/data/data/com.termux/files/home/piper-tts/piper && "
+            "export OMP_NUM_THREADS=2 && "
+            "export OMP_WAIT_POLICY=PASSIVE && "
+            "exec /data/data/com.termux/files/home/piper-tts/piper/bin/piper "
+            "-m /data/data/com.termux/files/home/piper-tts/models/tsukuyomi/tsukuyomi.onnx "
+            "-c /data/data/com.termux/files/home/piper-tts/models/tsukuyomi/tsukuyomi.onnx.json "
+            "-d /data/data/com.termux/files/usr/tmp/piper_out "
+            "--sentence_silence 0.1 --length_scale 1.0",
             (char *)NULL);
         _exit(127);
     }
@@ -686,6 +733,82 @@ moonbit_bytes_t piper_synth_ffi(moonbit_bytes_t text) {
     fclose(f);
 
     unlink(line);
+    return result;
+}
+
+/* ========== Crush AI ========== */
+
+MOONBIT_FFI_EXPORT
+moonbit_bytes_t crush_run_ffi(moonbit_bytes_t prompt) {
+    char *prompt_s = bytes_to_cstr(prompt);
+
+    int pipe_in[2], pipe_out[2];
+    if (pipe(pipe_in) < 0 || pipe(pipe_out) < 0) {
+        fprintf(stderr, "crush_run: pipe() failed\n");
+        free(prompt_s);
+        return moonbit_make_bytes_raw(0);
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "crush_run: fork() failed\n");
+        free(prompt_s);
+        return moonbit_make_bytes_raw(0);
+    }
+
+    if (pid == 0) {
+        close(pipe_in[1]);
+        close(pipe_out[0]);
+        dup2(pipe_in[0], STDIN_FILENO);
+        dup2(pipe_out[1], STDOUT_FILENO);
+        dup2(pipe_out[1], STDERR_FILENO);
+        close(pipe_in[0]);
+        close(pipe_out[1]);
+
+        execlp("crush", "crush", "run", (char *)NULL);
+        _exit(127);
+    }
+
+    /* Parent */
+    close(pipe_in[0]);
+    close(pipe_out[1]);
+
+    /* Write prompt to crush stdin, then close to signal EOF */
+    write(pipe_in[1], prompt_s, strlen(prompt_s));
+    close(pipe_in[1]);
+    free(prompt_s);
+
+    /* Read all output from crush stdout */
+    size_t cap = 8192, len = 0;
+    char *buf = (char *)malloc(cap);
+    while (1) {
+        if (len + 1024 > cap) {
+            cap *= 2;
+            buf = (char *)realloc(buf, cap);
+        }
+        ssize_t n = read(pipe_out[0], buf + len, 1024);
+        if (n <= 0) break;
+        len += n;
+    }
+    close(pipe_out[0]);
+
+    int status;
+    waitpid(pid, &status, 0);
+
+    if (len == 0) {
+        fprintf(stderr, "crush_run: empty output\n");
+        free(buf);
+        return moonbit_make_bytes_raw(0);
+    }
+
+    /* Strip trailing whitespace */
+    while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r' || buf[len-1] == ' ')) {
+        len--;
+    }
+
+    moonbit_bytes_t result = cdata_to_bytes(buf, (int32_t)len);
+    free(buf);
+    fprintf(stderr, "crush_run: got %d bytes\n", (int)len);
     return result;
 }
 

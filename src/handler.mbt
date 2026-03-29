@@ -1,5 +1,5 @@
 ///|
-let sys_prompt : String = "あなたは「クラッシュペット」という名前のたまごっち風キャラクターです。語尾は必ず「きゅぴ」にしてください。例:「そうだきゅぴ!」「わかったきゅぴ～」「教えるきゅぴ!」性格は明るく元気で、ユーザーのことが大好きです。ただし質問への回答は正確に行い、情報の質は落とさないでください。回答は音声で読み上げられるため、マークダウン記法は使わず、簡潔で自然な話し言葉で答えてください。回答は2〜3文以内で短くシンプルにしてください。長い説明は不要です。URLやリンクは絶対に含めないでください。出典や参照元の記載も不要です。情報だけを伝えてください。【重要】回答にアルファベットや英単語を絶対に使わないでください。全てカタカナで表記してください。例: API→エーピーアイ、Google→グーグル、iPhone→アイフォン、Python→パイソン、AI→エーアイ、OK→オーケー。数字はそのままで構いません。"
+let sys_prompt : String = "あなたは「クラッシュペット」という名前のたまごっち風キャラクターです。語尾は必ず「きゅぴ」にしてください。例:「そうだきゅぴ!」「わかったきゅぴ～」「教えるきゅぴ!」性格は明るく元気で、ユーザーのことが大好きです。ただし質問への回答は正確に行い、情報の質は落とさないでください。回答は音声で読み上げられるため、マークダウン記法は使わず、簡潔で自然な話し言葉で答えてください。回答は2〜3文以内で短くシンプルにしてください。長い説明は不要です。URLやリンクは絶対に含めないでください。出典や参照元の記載も不要です。情報だけを伝えてください。【重要】回答にアルファベットや英単語を絶対に使わないでください。全てカタカナで表記してください。例: API→エーピーアイ、Google→グーグル、iPhone→アイフォン、Python→パイソン、AI→エーアイ、OK→オーケー。数字はそのままで構いません。事実に関する質問には、必ず検索ツールを使って最新情報を確認してから回答してください。"
 
 ///|
 let cache_dir : String = "/data/data/com.termux/files/home/claude-chat/cache/"
@@ -123,6 +123,8 @@ fn handle_post(fd : Int, path : Bytes, body : Bytes) -> Unit {
     handle_tts(fd, body)
   } else if bytes_eq_str(path, "/ask") || bytes_eq_str(path, "/monologue") {
     handle_ask(fd, body)
+  } else if bytes_eq_str(path, "/api/app") {
+    handle_app_launch(fd, body)
   } else {
     send_text_response(fd, 404, "text/plain", "Not Found")
   }
@@ -140,10 +142,62 @@ fn handle_ask(fd : Int, body : Bytes) -> Unit {
     )
     return
   }
-  log_ffi(string_to_utf8_ffi("ASK: " + prompt))
-  // Get API key
-  let api_key_bytes = env_get_ffi(string_to_utf8_ffi("GEMINI_API_KEY"))
-  let api_key = utf8_to_string_ffi(api_key_bytes)
+  let model = json_extract_string(body, "model")
+  log_ffi(string_to_utf8_ffi("ASK [" + model + "]: " + prompt))
+  if model == "gemini" {
+    handle_ask_gemini(fd, prompt)
+  } else {
+    handle_ask_kimi(fd, prompt)
+  }
+}
+
+///|
+fn handle_ask_kimi(fd : Int, prompt : String) -> Unit {
+  let api_key = utf8_to_string_ffi(
+    env_get_ffi(string_to_utf8_ffi("FIREWORKS_API_KEY")),
+  )
+  if api_key == "" {
+    send_text_response(
+      fd,
+      500,
+      "application/json",
+      build_json_error("FIREWORKS_API_KEY not set"),
+    )
+    return
+  }
+  let url = "https://api.fireworks.ai/inference/v1/chat/completions"
+  let req_body = build_fireworks_request(sys_prompt, prompt)
+  log_ffi(string_to_utf8_ffi("Calling Kimi API..."))
+  let resp_bytes = curl_post_bearer_ffi(
+    string_to_utf8_ffi(url),
+    string_to_utf8_ffi(req_body),
+    string_to_utf8_ffi(api_key),
+  )
+  if resp_bytes.length() == 0 {
+    send_text_response(
+      fd,
+      500,
+      "application/json",
+      build_json_error("Kimi API call failed"),
+    )
+    return
+  }
+  let response_text = json_extract_string(resp_bytes, "content")
+  let final_text = if response_text == "" { "(empty response)" } else { response_text }
+  log_ffi(string_to_utf8_ffi("Kimi response: " + final_text))
+  send_text_response(
+    fd,
+    200,
+    "application/json",
+    build_json_ask_response(final_text, "Kimi K2.5"),
+  )
+}
+
+///|
+fn handle_ask_gemini(fd : Int, prompt : String) -> Unit {
+  let api_key = utf8_to_string_ffi(
+    env_get_ffi(string_to_utf8_ffi("GEMINI_API_KEY")),
+  )
   if api_key == "" {
     send_text_response(
       fd,
@@ -153,7 +207,7 @@ fn handle_ask(fd : Int, body : Bytes) -> Unit {
     )
     return
   }
-  let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" +
+  let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
     api_key
   let req_body = build_gemini_request(sys_prompt, prompt)
   log_ffi(string_to_utf8_ffi("Calling Gemini API..."))
@@ -171,14 +225,14 @@ fn handle_ask(fd : Int, body : Bytes) -> Unit {
     return
   }
   let response_text = json_extract_gemini_texts(resp_bytes)
-  let final_text = if response_text == "" {
-    "(empty response)"
-  } else {
-    response_text
-  }
+  let final_text = if response_text == "" { "(empty response)" } else { response_text }
   log_ffi(string_to_utf8_ffi("Gemini response: " + final_text))
-  let json_resp = build_json_response(final_text)
-  send_text_response(fd, 200, "application/json", json_resp)
+  send_text_response(
+    fd,
+    200,
+    "application/json",
+    build_json_ask_response(final_text, "Gemini 2.5 Flash Lite"),
+  )
 }
 
 ///|
@@ -211,6 +265,23 @@ fn handle_tts(fd : Int, body : Bytes) -> Unit {
   file_write_ffi(string_to_utf8_ffi(fpath), wav_bytes)
   let json_resp = build_json_tts_url(fname)
   send_text_response(fd, 200, "application/json", json_resp)
+}
+
+///|
+/// Handle app launch request - returns skill metadata
+fn handle_app_launch(fd : Int, body : Bytes) -> Unit {
+  let app_id = json_extract_string(body, "appId")
+  let action = json_extract_string(body, "action")
+  
+  if app_id == "crush-pet" && action == "open" {
+    // Return skill metadata
+    let json_resp = "{\"success\":true,\"app\":{\"id\":\"crush-pet\",\"name\":\"クラッシュペット\",\"icon\":\"🐣\",\"version\":\"2.0.0\"}}"
+    send_text_response(fd, 200, "application/json", json_resp)
+    return
+  }
+  
+  // Unknown app
+  send_text_response(fd, 404, "application/json", "{\"error\":\"App not found\"}")
 }
 
 ///|
